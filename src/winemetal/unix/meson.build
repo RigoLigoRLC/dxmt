@@ -35,10 +35,18 @@ presentation_bridge = static_library('presentation_bridge',
   install : false,
 )
 
+presentation_feedback = static_library('presentation_feedback',
+  'presentation_feedback.c',
+  c_args : ['-ObjC', '-fobjc-arc', '-fblocks'],
+  native : true,
+  pic : true,
+  install : false,
+)
+
 shared_library('winemetal', winemetal_unix_src,
   name_prefix         : '',
   dependencies        : [ airconv_dep_darwin ],
-  link_whole          : [ presentation_bridge ],
+  link_whole          : [ presentation_bridge, presentation_feedback ],
   include_directories : dxmt_include_path,
   c_args              : ['-ObjC'],
   link_args           : winemetal_unix_ld_args,

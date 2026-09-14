@@ -462,7 +462,9 @@ ArgumentEncodingContext::resolveTexture(
 };
 
 void
-ArgumentEncodingContext::present(Rc<Texture> &texture, Rc<Presenter> &presenter, double after, DXMTPresentMetadata metadata) {
+ArgumentEncodingContext::present(
+    Rc<Texture> &texture, Rc<Presenter> &presenter, double after, DXMTPresentMetadata metadata,
+    const WMT::Reference<WMT::Object> &presentation_feedback) {
   assert(!encoder_current);
   auto encoder_info = allocate<PresentData>();
   encoder_info->type = EncoderType::Present;
@@ -472,6 +474,7 @@ ArgumentEncodingContext::present(Rc<Texture> &texture, Rc<Presenter> &presenter,
   encoder_info->presenter = presenter;
   encoder_info->after = after;
   encoder_info->metadata = metadata;
+  encoder_info->presentation_feedback = presentation_feedback;
 
   encoder_current = encoder_info;
   encoder_info->backbuffer = access(texture, texture->fullView, ResourceAccess::Read).texture;
@@ -1028,6 +1031,8 @@ ArgumentEncodingContext::flushCommands(WMT::CommandBuffer cmdbuf, uint64_t seqId
       );
       auto t1 = clock::now();
       currentFrameStatistics().drawable_blocking_interval += (t1 - t0);
+      if (data->presentation_feedback)
+        WMTPresentationFence_trackDrawable(data->presentation_feedback, drawable, cmdbuf);
       if (data->after > 0)
         cmdbuf.presentDrawableAfterMinimumDuration(drawable, data->after);
       else

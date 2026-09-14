@@ -27,6 +27,13 @@
 
 typedef uint64_t obj_handle_t;
 
+// A cancellable count of completed/dropped presentations, separate from GPU fences.
+WINEMETAL_API obj_handle_t WMTPresentationFence_create(void);
+WINEMETAL_API uint64_t WMTPresentationFence_wait(obj_handle_t fence, uint64_t previous);
+WINEMETAL_API void WMTPresentationFence_cancel(obj_handle_t fence);
+WINEMETAL_API void WMTPresentationFence_trackDrawable(
+    obj_handle_t fence, obj_handle_t drawable, obj_handle_t command_buffer);
+
 #define NULL_OBJECT_HANDLE 0
 
 #ifndef _MACH_PORT_T

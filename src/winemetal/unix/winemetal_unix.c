@@ -16,6 +16,35 @@
 typedef int NTSTATUS;
 #define STATUS_SUCCESS 0
 #define STATUS_UNSUCCESSFUL 0xC0000001
+#include "presentation_feedback.h"
+
+static NTSTATUS
+_WMTPresentationFence_create(void *obj) {
+  struct unixcall_generic_obj_ret *params = obj;
+  params->ret = (obj_handle_t)WMTNativePresentationFenceCreate();
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTPresentationFence_wait(void *obj) {
+  struct unixcall_generic_obj_uint64_uint64_ret *params = obj;
+  params->ret = WMTNativePresentationFenceWait((void *)params->handle, params->arg);
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTPresentationFence_cancel(void *obj) {
+  struct unixcall_generic_obj_noret *params = obj;
+  WMTNativePresentationFenceCancel((void *)params->handle);
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTPresentationFence_trackDrawable(void *obj) {
+  struct unixcall_generic_obj_obj_uint64_noret *params = obj;
+  WMTNativePresentationFenceTrack((void *)params->handle, (void *)params->arg0, (void *)params->arg1);
+  return STATUS_SUCCESS;
+}
 
 void
 execute_on_main(dispatch_block_t block) {
@@ -2959,6 +2988,10 @@ const void *__wine_unix_call_funcs[] = {
     &_MTLCommandBuffer_blitCommandEncoderWithSampleBuffers,
     &_MTLCommandBuffer_property,
     &_MTLDevice_newTileRenderPipelineState,
+    &_WMTPresentationFence_create,
+    &_WMTPresentationFence_wait,
+    &_WMTPresentationFence_cancel,
+    &_WMTPresentationFence_trackDrawable,
 };
 
 #ifndef DXMT_NATIVE
@@ -3095,5 +3128,9 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_MTLCommandBuffer_blitCommandEncoderWithSampleBuffers,
     &_MTLCommandBuffer_property,
     &_MTLDevice_newTileRenderPipelineState,
+    &_WMTPresentationFence_create,
+    &_WMTPresentationFence_wait,
+    &_WMTPresentationFence_cancel,
+    &_WMTPresentationFence_trackDrawable,
 };
 #endif

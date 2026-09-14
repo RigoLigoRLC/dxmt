@@ -19,6 +19,32 @@
   }
 #endif
 
+WINEMETAL_API obj_handle_t
+WMTPresentationFence_create(void) {
+  struct unixcall_generic_obj_ret params = {0};
+  UNIX_CALL(132, &params);
+  return params.ret;
+}
+
+WINEMETAL_API uint64_t
+WMTPresentationFence_wait(obj_handle_t fence, uint64_t previous) {
+  struct unixcall_generic_obj_uint64_uint64_ret params = {fence, previous, UINT64_MAX};
+  UNIX_CALL(133, &params);
+  return params.ret;
+}
+
+WINEMETAL_API void
+WMTPresentationFence_cancel(obj_handle_t fence) {
+  struct unixcall_generic_obj_noret params = {fence};
+  UNIX_CALL(134, &params);
+}
+
+WINEMETAL_API void
+WMTPresentationFence_trackDrawable(obj_handle_t fence, obj_handle_t drawable, obj_handle_t command_buffer) {
+  struct unixcall_generic_obj_obj_uint64_noret params = {fence, drawable, command_buffer};
+  UNIX_CALL(135, &params);
+}
+
 #define PtrToUInt64(v) ((uint64_t)(uintptr_t)(v))
 
 WINEMETAL_API void

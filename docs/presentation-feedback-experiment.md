@@ -68,9 +68,9 @@ completion and display; it does not identify the swapchain's buffer count.
    `CommandQueue::WaitForFinishThread`, including resource retirement and the CPU
    coherence signal. A proper implementation needs an independent presentation
    fence so GPU-completed resources can be reused promptly.
-2. Tie the swapchain waitable object to actual presentation capacity. Its existing
-   semaphore is released while recording the presentation command. This experiment
-   affects the device-level fence, not that separate waitable-object path.
+2. Validate the separate waitable-swapchain fix below with real Wine applications.
+   The installed quick binary patch still contains only the device-level bridge;
+   rebuilding this branch is required to get the swapchain fix.
 3. Reduce the remaining queue without losing the 60 FPS cadence. In this version,
    `PresentBoundary()` waits after submission; a device limit of 1 permits two
    submissions before the first wait. Waiting for the current frame lost FPS in
@@ -98,3 +98,48 @@ configuration once those dependencies are available. For a native compile check:
 clang -arch x86_64 -ObjC -fobjc-arc -fblocks -O2 -c \
   src/winemetal/unix/presentation_bridge.c -o /tmp/presentation_bridge.o
 ```
+
+## Waitable swapchain follow-up
+
+The source branch now also fixes the separate waitable-object path. `Present1`
+no longer releases `present_semaphore_` while recording `ctx.present()`, and
+`SyncFrameState` no longer reports completion when the encoder lambda is destroyed.
+`PresentData` retains a native presentation counter and registers a ticket with
+the actual Metal drawable before scheduling presentation. Successful GPU completion
+leaves the ticket pending; a presented/dropped callback or command-buffer error
+returns one credit. Duplicate error/drop callbacks cannot return two credits.
+
+Each waitable swapchain owns a Wine-created worker that waits for counter changes,
+releases semaphore credits and advances its internal admission fence. Cancellation
+wakes and joins this worker before its semaphore is closed. Late Metal callbacks
+own only retained native state. Swapchains without the waitable flag allocate no
+counter or worker. Both ordinary and MetalFX presentation paths carry the counter.
+
+This new path does not intercept GPU completion or delay GPU cleanup. The older
+experimental device-level bridge remains independently enabled on this branch;
+use `DXMT_PRESENTATION_BRIDGE=0` to isolate the waitable fix when rebuilding/testing.
+Existing WineMetal unix-call indices are preserved, with four calls appended to
+both the 64-bit and WoW64 tables. Rebuild and deploy matching `d3d11.dll`,
+`winemetal.dll` and `winemetal.so`; mixing the new DLL with an old Unix library is
+not supported. No updated binaries have been installed into Yaagl for this fix.
+
+The callback regression suite uses controlled drawable/command-buffer objects to
+separate recording, GPU completion and display completion. It covers normal GPU
+completion remaining blocked, display/drop release, error/drop duplicate handling,
+out-of-order callbacks, cancellation with late callbacks, and independent counters.
+A negative-control build that returns a credit during registration fails the first
+blocked-wait assertion. This checks the failure mechanism, not an end-to-end run
+of the original DXMT binary. Run with Meson's `enable_tests` option, or directly:
+
+```sh
+clang -arch x86_64 -ObjC -fobjc-arc -fblocks -Wall -Wextra -Werror \
+  -Isrc/winemetal/unix tests/winemetal/presentation_feedback.c \
+  src/winemetal/unix/presentation_feedback.c \
+  -framework Foundation -framework Metal -o /tmp/dxmt-presentation-feedback-test
+/tmp/dxmt-presentation-feedback-test
+```
+
+The native callback tests and compilation checks do not establish an HSR latency
+improvement. Real Wine presentation, transitions and full cross-build validation
+remain to be performed. The local AddressSanitizer runtime hung during its own
+startup before `main`; that attempt provides no sanitizer coverage.

@@ -14,6 +14,7 @@
 #include "d3d11_resource.hpp"
 #include "d3d11_device.hpp"
 #include "util_cpu_fence.hpp"
+#include "thread.hpp"
 #include "util_env.hpp"
 #include "util_string.hpp"
 #include "util_win32_compat.h"
@@ -153,6 +154,9 @@ public:
     // without this flag, there is still a DXGIDevice level of frame latency control
     if (desc_.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT) {
       frame_latency_fence_ = std::make_unique<CpuFence>();
+      presentation_feedback_ = WMT::Reference<WMT::Object>(WMTPresentationFence_create());
+      if (!presentation_feedback_)
+        throw MTLD3DError("Failed to create presentation feedback");
     }
 
     if (desc_.Width == 0 || desc_.Height == 0) {
@@ -202,10 +206,30 @@ public:
     ResizeBuffers(0, desc_.Width, desc_.Height, DXGI_FORMAT_UNKNOWN, desc_.Flags);
     if (!fullscreen_desc_.Windowed)
       EnterFullscreenMode(nullptr);
+    if (presentation_feedback_) {
+      presentation_thread_ = dxmt::thread([this] {
+        env::setThreadName("dxmt-present-feedback");
+        uint64_t previous = 0;
+        for (;;) {
+          const auto completed = WMTPresentationFence_wait(presentation_feedback_, previous);
+          if (completed == UINT64_MAX)
+            break;
+          // This is a Wine-created thread; Metal callback threads must not call
+          // Win32 APIs. Successful GPU completion never reaches this counter.
+          ReleaseSemaphore(present_semaphore_, static_cast<LONG>(completed - previous), nullptr);
+          frame_latency_fence_->signal(completed);
+          previous = completed;
+        }
+      });
+    }
   };
 
   ~MTLD3D11SwapChain() {
     device_context_->WaitUntilGPUIdle();
+    if (presentation_feedback_) {
+      WMTPresentationFence_cancel(presentation_feedback_);
+      presentation_thread_.join();
+    }
     WMT::ReleaseMetalView(native_view_);
     native_view_ = {};
     CloseHandle(present_semaphore_);
@@ -695,37 +719,10 @@ public:
     return E_NOTIMPL;
   };
 
-  class SyncFrameState {
-    uint64_t frame_id_ = 0;
-    CpuFence *frame_latency_fence_ = nullptr;
-
-  public:
-    SyncFrameState() {}
-    SyncFrameState(uint64_t frame_id, CpuFence *frame_latency_fence)
-        : frame_id_(frame_id), frame_latency_fence_(frame_latency_fence) {}
-
-    SyncFrameState(const SyncFrameState &) = delete;
-    SyncFrameState(SyncFrameState &&move) {
-      frame_id_ = move.frame_id_;
-      frame_latency_fence_ = move.frame_latency_fence_;
-      move.frame_latency_fence_ = nullptr;
-    };
-    ~SyncFrameState() {
-      if (frame_latency_fence_) {
-        frame_latency_fence_->signal(frame_id_);
-        frame_latency_fence_ = nullptr;
-      }
-    }
-  };
-
-  SyncFrameState SyncFrame(uint64_t current_frame_id) {
-    if (frame_latency_fence_) {
-      if (current_frame_id > frame_latency)
-        frame_latency_fence_->wait(current_frame_id - frame_latency);
-      return SyncFrameState(current_frame_id, frame_latency_fence_.get());
-    }
-    return SyncFrameState();
-  };
+  void SyncFrame(uint64_t current_frame_id) {
+    if (frame_latency_fence_ && current_frame_id > frame_latency)
+      frame_latency_fence_->wait(current_frame_id - frame_latency);
+  }
 
   HRESULT
   STDMETHODCALLTYPE
@@ -768,6 +765,7 @@ public:
     auto &cmd_queue = device_->GetDXMTDevice().queue();
     auto chunk = cmd_queue.CurrentChunk();
     chunk->signal_frame_latency_fence_ = cmd_queue.CurrentFrameSeq();
+    SyncFrame(++presentation_count_);
     if (target_) {
       auto output = static_cast<MTLDXGIOutput *>(target_.ptr());
       presenter->changeGammaRamp(output->GetGammaRamp());
@@ -775,7 +773,7 @@ public:
     if constexpr (EnableMetalFX) {
       chunk->emitcc([
         this, vsync_duration, backbuffer = backbuffer_->texture(),
-        sync_state = SyncFrame(++presentation_count_),
+        presentation_feedback = presentation_feedback_,
         upscaled = upscaled_backbuffer_->texture(),
         scaler = this->metalfx_scaler, state = presenter->synchronizeLayerProperties()
       ](ArgumentEncodingContext &ctx) mutable {
@@ -786,18 +784,16 @@ public:
         scaler_info.output_width = upscaled->width();
         scaler_info.output_height = upscaled->height();
         ctx.upscale(backbuffer, upscaled, scaler);
-        ctx.present(upscaled, presenter, vsync_duration, state.metadata);
-        ReleaseSemaphore(present_semaphore_, 1, nullptr);
+        ctx.present(upscaled, presenter, vsync_duration, state.metadata, presentation_feedback);
         this->UpdateStatistics(ctx.queue().statistics, ctx.currentFrameId());
       });
     } else {
       chunk->emitcc([
         this, vsync_duration, state = presenter->synchronizeLayerProperties(),
-        sync_state = SyncFrame(++presentation_count_),
+        presentation_feedback = presentation_feedback_,
         backbuffer = backbuffer_->texture()
       ](ArgumentEncodingContext &ctx) mutable {
-        ctx.present(backbuffer, presenter, vsync_duration, state.metadata);
-        ReleaseSemaphore(present_semaphore_, 1, nullptr);
+        ctx.present(backbuffer, presenter, vsync_duration, state.metadata, presentation_feedback);
         this->UpdateStatistics(ctx.queue().statistics, ctx.currentFrameId());
       });
     }
@@ -1057,7 +1053,7 @@ private:
   Com<IMTLDXGIDevice> dxgi_device_;
   WMT::Object native_view_;
   WMT::MetalLayer layer_weak_;
-  ULONG presentation_count_;
+  uint64_t presentation_count_;
   DXGI_SWAP_CHAIN_DESC1 desc_;
   DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen_desc_;
   D3D11_TEXTURE2D_DESC1 backbuffer_desc_;
@@ -1065,6 +1061,8 @@ private:
   Com<D3D11ResourceCommon, false> backbuffer_;
   HANDLE present_semaphore_;
   std::unique_ptr<CpuFence> frame_latency_fence_;
+  WMT::Reference<WMT::Object> presentation_feedback_;
+  dxmt::thread presentation_thread_;
   HWND hWnd;
   HMONITOR monitor_;
   Com<IDXGIOutput1> target_;
