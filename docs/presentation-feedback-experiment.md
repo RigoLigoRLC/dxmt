@@ -68,7 +68,8 @@ completion and display; it does not identify the swapchain's buffer count.
    `CommandQueue::WaitForFinishThread`, including resource retirement and the CPU
    coherence signal. A proper implementation needs an independent presentation
    fence so GPU-completed resources can be reused promptly.
-2. Validate the separate waitable-swapchain fix below with real Wine applications.
+2. Continue validation of the separate waitable-swapchain fix below after the
+   completed basic Wine comparison; see the follow-up timing findings.
    The installed quick binary patch still contains only the device-level bridge;
    rebuilding this branch is required to get the swapchain fix.
 3. Reduce the remaining queue without losing the 60 FPS cadence. In this version,
@@ -86,10 +87,11 @@ remaining delay into rendering, queued images, and display scheduling.
 ## Validation and rebuilding
 
 The standalone bridge was compiled and exercised during the original experiment.
-For this source collection, its native ARC object and force-loaded shared-library
-link were checked with Apple Clang. A complete DXMT cross-build has not been run;
-it still needs the Wine/Windows build inputs and native LLVM 15 described in the
-repository README.
+The complete DXMT Wine cross-build now succeeds using llvm-mingw 21.1.8,
+Wine SDK 8.16, native LLVM 15, and Xcode's Metal toolchain. The callback suite and
+actual old/new Wine binaries have been exercised. See
+[presentation timing findings](presentation-timing-findings.md) for the encoder
+wake-up regression, measured presentation schedules, and remaining validation.
 
 The branch contains no compiled binaries. Build DXMT through its normal Meson
 configuration once those dependencies are available. For a native compile check:
@@ -139,7 +141,8 @@ clang -arch x86_64 -ObjC -fobjc-arc -fblocks -Wall -Wextra -Werror \
 /tmp/dxmt-presentation-feedback-test
 ```
 
-The native callback tests and compilation checks do not establish an HSR latency
-improvement. Real Wine presentation, transitions and full cross-build validation
-remain to be performed. The local AddressSanitizer runtime hung during its own
+The callback tests and real Wine comparisons do not establish an HSR latency
+improvement. The full cross-build and basic Wine presentation checks have now
+passed; transitions and the proposed native scheduling configuration under a
+complete variable-GPU workload still need validation. The local AddressSanitizer runtime hung during its own
 startup before `main`; that attempt provides no sanitizer coverage.
