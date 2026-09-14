@@ -150,7 +150,7 @@ private:
   std::array<CommandChunk, kCommandChunkCount> chunks;
   uint64_t encoder_seq = 1;
   uint64_t frame_count = 0;
-  uint32_t max_latency_ = 3;
+  uint32_t max_latency_ = 1;
 
   dxmt::thread encodeThread;
   dxmt::thread finishThread;
