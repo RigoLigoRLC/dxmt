@@ -1,3 +1,21 @@
+# Windows comparison correction (2026-09-15 evening)
+
+The user's 160-Hz Windows HSR capture has 12.49/18.75-ms display-spacing peaks
+despite 60-FPS production and 4.44-ms average present-to-display delay. A single
+exact 16.67-ms display-spacing peak is not an acceptance requirement. Verify
+steady production, fresh input and short presentation queues together. Do not
+assume the Mac's different peaks have the same cause from their shape alone.
+
+The opt-in displayLinkPacing implementation is now connected to
+both DXGI paths and honors VSync for nonzero SyncInterval. The initial ordinary
+presentation prototype mistakenly left layer VSync off; exclude those results.
+For the fixed-work nonwaitable demo at device latency maximum 3, the old path
+gave 60 FPS, 41.33-ms median present delay and 107.07-ms input-to-display;
+the new path gave 59.98 FPS, 7.56 ms and 9.93 ms, with no older frames at input.
+This is not HSR. Variable GPU execution from 1.14 to 13.56 ms also sustained
+60.05 FPS, with all 600 warm frames shown and median input-to-display 15.96 ms.
+Yaagl is unchanged. See the local task outputs/frame-spacing/README.md.
+
 # Communication
 
 Explain everything in simple terms a software engineer can follow. Start with what the result means for the user, then explain the cause and supporting evidence. For this investigation, use language such as: "Windows gets a freshly made frame onto the screen quickly. Our Mac path seems to hold it longer. We need to find whether that wait is required by the platform or caused by how we use its APIs."
@@ -11,8 +29,9 @@ Give a clear verdict for each hypothesis: supported, rejected, or unresolved, an
 Read `docs/presentation-feedback-experiment.md` and `tests/presentation/README.md`
 first. The native reference under `tests/presentation/native/` now achieves both
 low delay and even 60-FPS spacing in ProMotion mode with ordinary CADisplayLink at
-60 callbacks/s and ordinary drawable presentation. It is not yet connected to
-DXGI. Fixed physical 60 Hz remains slower. The old GPU-status hook, forced
+60 callbacks/s and ordinary drawable presentation. The opt-in DXGI integration
+is now verified in fixed/variable-work Wine diagnostics. Fixed physical 60 Hz
+remains slower. The old GPU-status hook, forced
 one-frame default, strict device-wide presentation wait, and diagnostic timing
 overrides were removed on `experiment/display-driven-pacing`; do not assume they
 are still active or require disabling. The earlier state is preserved at d79e6ff.
@@ -53,3 +72,7 @@ atomic wait polled and added milliseconds. Homebrew GCC's standard atomic wait
 was verified to block and wake promptly in the isolated Wine runtime. The custom
 Win32 address-wait helper was removed; keep ordinary C++ wait/notify. Do not
 describe the polling delay as an unavoidable Wine or cross-compilation problem.
+
+The last dark fullscreen test exited normally; the user confirmed the desktop
+returned. Keep further work offscreen. Eight native tests passed, including the
+final uncapped-capacity adjustment, which has not received a Wine GUI test.

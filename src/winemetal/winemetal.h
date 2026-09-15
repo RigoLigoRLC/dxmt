@@ -27,6 +27,14 @@
 
 typedef uint64_t obj_handle_t;
 
+#include "frame_pacing.h"
+
+WINEMETAL_API bool WMTPresentationFence_configureDisplayLink(
+    obj_handle_t fence, obj_handle_t layer, double fps, uint32_t max_latency);
+WINEMETAL_API void WMTPresentationFence_submit(obj_handle_t fence);
+WINEMETAL_API bool WMTPresentationFence_waitUpdate(
+    obj_handle_t fence, uint64_t previous, struct WMTFramePacingUpdate *update);
+
 // A cancellable count of completed/dropped presentations, separate from GPU fences.
 WINEMETAL_API obj_handle_t WMTPresentationFence_create(void);
 WINEMETAL_API uint64_t WMTPresentationFence_wait(obj_handle_t fence, uint64_t previous);

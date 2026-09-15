@@ -139,6 +139,109 @@ static void test_swapchains_have_independent_capacity(void) {
   release_fence(b);
 }
 
+
+struct UpdateResult {
+  bool success;
+  struct WMTFramePacingUpdate state;
+};
+
+static dispatch_semaphore_t update_async(void *fence, uint64_t previous, struct UpdateResult *result) {
+  dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+    @autoreleasepool {
+      result->success = WMTNativePresentationFenceWaitUpdate(fence, previous, &result->state);
+      dispatch_semaphore_signal(finished);
+    }
+  });
+  return finished;
+}
+
+static void test_frame_start_needs_capacity_and_display_tick(void) {
+  void *fence = WMTNativePresentationFenceCreate();
+  TestDrawable *drawable = [TestDrawable new];
+  TestCommandBuffer *buffer = [TestCommandBuffer new];
+  WMTNativePresentationFenceSetFrameLimit(fence, 1);
+  WMTNativePresentationFenceSubmit(fence);
+  track(fence, drawable, buffer);
+  struct UpdateResult result = {0};
+  dispatch_semaphore_t finished = update_async(fence, 0, &result);
+  WMTNativePresentationFenceDisplayTick(fence, 1.0, 1.016);
+  expect_blocked(finished); // The display tick cannot overrun the full queue.
+  [buffer complete:MTLCommandBufferStatusCompleted];
+  expect_blocked(finished); // A successful GPU completion does not empty it.
+  [drawable displayOrDrop];
+  expect_finished(finished);
+  assert(result.success && result.state.completed == 1 && result.state.ready == 0);
+  WMTNativePresentationFenceDisplayTick(fence, 1.016, 1.032);
+  assert(WMTNativePresentationFenceWaitUpdate(fence, result.state.version, &result.state));
+  assert(result.state.ready == 1 && result.state.tick == 2);
+  finished = update_async(fence, result.state.version, &result);
+  WMTNativePresentationFenceDisplayTick(fence, 1.032, 1.048);
+  expect_blocked(finished); // Don't accumulate credits while the app is idle.
+  WMTNativePresentationFenceCancel(fence);
+  expect_finished(finished);
+  assert(!result.success);
+  release_fence(fence);
+}
+
+static void test_frame_limit_allows_overlap_without_extra_credits(void) {
+  void *fence = WMTNativePresentationFenceCreate();
+  WMTNativePresentationFenceSetFrameLimit(fence, 2);
+  TestDrawable *a = [TestDrawable new], *b = [TestDrawable new];
+  TestCommandBuffer *ca = [TestCommandBuffer new], *cb = [TestCommandBuffer new];
+  WMTNativePresentationFenceSubmit(fence);
+  track(fence, a, ca);
+  WMTNativePresentationFenceDisplayTick(fence, 1, 2);
+  struct WMTFramePacingUpdate state = {0};
+  assert(WMTNativePresentationFenceWaitUpdate(fence, 0, &state));
+  assert(state.ready == 1 && state.completed == 0);
+  WMTNativePresentationFenceSubmit(fence);
+  track(fence, b, cb);
+  struct UpdateResult result = {0};
+  dispatch_semaphore_t finished = update_async(fence, state.version, &result);
+  WMTNativePresentationFenceDisplayTick(fence, 2, 3);
+  expect_blocked(finished); // Both presentation slots are now occupied.
+  [a displayOrDrop];
+  expect_finished(finished);
+  assert(result.state.completed == 1 && result.state.ready == 1);
+  WMTNativePresentationFenceDisplayTick(fence, 3, 4);
+  assert(WMTNativePresentationFenceWaitUpdate(fence, result.state.version, &state));
+  assert(state.ready == 2);
+  WMTNativePresentationFenceCancel(fence);
+  release_fence(fence);
+  [b displayOrDrop];
+}
+
+static void test_uncapped_waits_for_capacity_without_display_ticks(void) {
+  void *fence = WMTNativePresentationFenceCreate();
+  assert(WMTNativePresentationFenceConfigureDisplayLink(fence, NULL, 0, 2));
+  TestDrawable *a = [TestDrawable new], *b = [TestDrawable new];
+  TestCommandBuffer *ca = [TestCommandBuffer new], *cb = [TestCommandBuffer new];
+  WMTNativePresentationFenceSubmit(fence);
+  track(fence, a, ca);
+  struct WMTFramePacingUpdate state = {0};
+  assert(WMTNativePresentationFenceWaitUpdate(fence, 0, &state));
+  assert(state.ready == 1 && state.completed == 0);
+  WMTNativePresentationFenceSubmit(fence);
+  track(fence, b, cb);
+  struct UpdateResult result = {0};
+  dispatch_semaphore_t finished = update_async(fence, state.version, &result);
+  expect_blocked(finished); // Full even though no display clock is requested.
+  [ca complete:MTLCommandBufferStatusCompleted];
+  expect_blocked(finished);
+  [a displayOrDrop];
+  expect_finished(finished); // Capacity returns without waiting for a tick.
+  assert(result.state.ready == 2 && result.state.completed == 1);
+  finished = update_async(fence, result.state.version, &result);
+  WMTNativePresentationFenceDisplayTick(fence, 3, 4);
+  expect_blocked(finished); // Paused display callbacks cannot add a credit.
+  WMTNativePresentationFenceCancel(fence);
+  expect_finished(finished);
+  assert(!result.success);
+  release_fence(fence);
+  [b displayOrDrop];
+}
+
 int main(void) {
   @autoreleasepool {
     test_gpu_completion_does_not_release_capacity();
@@ -146,6 +249,9 @@ int main(void) {
     test_out_of_order_callbacks_count_each_frame();
     test_cancel_and_late_callback();
     test_swapchains_have_independent_capacity();
-    puts("PASS: 5 presentation feedback tests");
+    test_frame_start_needs_capacity_and_display_tick();
+    test_frame_limit_allows_overlap_without_extra_credits();
+    test_uncapped_waits_for_capacity_without_display_ticks();
+    puts("PASS: 8 presentation feedback tests");
   }
 }

@@ -6,6 +6,21 @@
 
 #pragma pack(push, 8)
 
+struct unixcall_presentation_configure {
+  obj_handle_t fence;
+  obj_handle_t layer;
+  double fps;
+  uint32_t max_latency;
+  uint32_t ret;
+};
+struct unixcall_presentation_update {
+  obj_handle_t fence;
+  uint64_t previous;
+  struct WMTFramePacingUpdate update;
+  uint64_t ret;
+};
+
+
 struct unixcall_generic_obj_ret {
   obj_handle_t ret;
 };

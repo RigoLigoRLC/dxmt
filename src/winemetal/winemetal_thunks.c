@@ -45,6 +45,27 @@ WMTPresentationFence_trackDrawable(obj_handle_t fence, obj_handle_t drawable, ob
   UNIX_CALL(135, &params);
 }
 
+WINEMETAL_API bool
+WMTPresentationFence_configureDisplayLink(obj_handle_t fence, obj_handle_t layer, double fps, uint32_t max_latency) {
+  struct unixcall_presentation_configure params = {fence, layer, fps, max_latency, 0};
+  UNIX_CALL(136, &params);
+  return params.ret != 0;
+}
+
+WINEMETAL_API void
+WMTPresentationFence_submit(obj_handle_t fence) {
+  struct unixcall_generic_obj_noret params = {fence};
+  UNIX_CALL(137, &params);
+}
+
+WINEMETAL_API bool
+WMTPresentationFence_waitUpdate(obj_handle_t fence, uint64_t previous, struct WMTFramePacingUpdate *update) {
+  struct unixcall_presentation_update params = {.fence = fence, .previous = previous};
+  UNIX_CALL(138, &params);
+  *update = params.update;
+  return params.ret != 0;
+}
+
 #define PtrToUInt64(v) ((uint64_t)(uintptr_t)(v))
 
 WINEMETAL_API void

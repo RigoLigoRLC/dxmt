@@ -34,6 +34,14 @@ Presenter::Presenter(WMT::Device device, WMT::MetalLayer layer, InternalCommandL
   gamma_lut_texture_ = device.newTexture(texture_info);
 }
 
+void
+Presenter::setDisplaySyncEnabled(bool enabled) {
+  if (layer_props_.display_sync_enabled == enabled)
+    return;
+  layer_props_.display_sync_enabled = enabled;
+  layer_.setProps(layer_props_);
+}
+
 bool
 Presenter::changeLayerProperties(
     WMTPixelFormat format, WMTColorSpace colorspace, double width, double height, uint8_t sample_count

@@ -46,6 +46,28 @@ _WMTPresentationFence_trackDrawable(void *obj) {
   return STATUS_SUCCESS;
 }
 
+static NTSTATUS
+_WMTPresentationFence_configureDisplayLink(void *obj) {
+  struct unixcall_presentation_configure *params = obj;
+  params->ret = WMTNativePresentationFenceConfigureDisplayLink(
+      (void *)params->fence, (void *)params->layer, params->fps, params->max_latency);
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTPresentationFence_submit(void *obj) {
+  struct unixcall_generic_obj_noret *params = obj;
+  WMTNativePresentationFenceSubmit((void *)params->handle);
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTPresentationFence_waitUpdate(void *obj) {
+  struct unixcall_presentation_update *params = obj;
+  params->ret = WMTNativePresentationFenceWaitUpdate((void *)params->fence, params->previous, &params->update);
+  return STATUS_SUCCESS;
+}
+
 void
 execute_on_main(dispatch_block_t block) {
   if ([NSThread isMainThread]) {
@@ -2992,6 +3014,9 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTPresentationFence_wait,
     &_WMTPresentationFence_cancel,
     &_WMTPresentationFence_trackDrawable,
+    &_WMTPresentationFence_configureDisplayLink,
+    &_WMTPresentationFence_submit,
+    &_WMTPresentationFence_waitUpdate,
 };
 
 #ifndef DXMT_NATIVE
@@ -3132,5 +3157,8 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTPresentationFence_wait,
     &_WMTPresentationFence_cancel,
     &_WMTPresentationFence_trackDrawable,
+    &_WMTPresentationFence_configureDisplayLink,
+    &_WMTPresentationFence_submit,
+    &_WMTPresentationFence_waitUpdate,
 };
 #endif

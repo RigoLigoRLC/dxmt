@@ -1,8 +1,8 @@
 # Presentation timing diagnostics
 
 The active comparison is whether the display wakes frame production early enough
-to use fresh input, while keeping 60 distinct frames per second and even display
-spacing. These tools do not launch HSR or install anything into Yaagl.
+to use fresh input, while keeping about 60 distinct frames per second and short presentation queues.
+Display spacing need not be a single exact 16.67-ms peak; compare input age too. These tools do not launch HSR or install anything into Yaagl.
 
 ## Native reference
 
@@ -41,19 +41,29 @@ Use Homebrew `mingw-w64`, as the release package jobs in `.github/workflows/ci.y
 
 ```sh
 x86_64-w64-mingw32-gcc -O2 tests/presentation/waitable_pacing.c \
-  -ld3d11 -ldxgi -ldxguid -o /tmp/waitable_pacing.exe
+  -ld3d11 -ldxgi -ldxguid -ld3dcompiler -o /tmp/waitable_pacing.exe
 clang -arch x86_64 -dynamiclib -O2 -fobjc-arc -fblocks \
   tests/presentation/present_trace_wall.m -framework Metal -framework QuartzCore \
   -o /tmp/present_trace_wall.dylib
 ```
 
 ```
-waitable_pacing.exe output.csv durationSeconds waitable maxLatency syncInterval logicMilliseconds
+waitable_pacing.exe output.csv durationSeconds waitable maxLatency syncInterval logicMilliseconds fullscreen gpuWork
 ```
 
 The loop pumps window messages while waiting, records the input/state-update
-boundary, performs constant CPU work (default 2 ms), and presents. The old CPU
-timer-cap and alternative wait-mode controls are removed.
+boundary, performs constant CPU work (default 2 ms), and presents. `fullscreen=1` opens a borderless fullscreen window; default is a 960x600 window.
+The GPU normally clears the frame. `gpuWork=1` adds a fullscreen shader with a
+repeating sequence of iteration counts (256 times 1,3,6,2,4,8,2,5). Larger positive
+values multiply the work. Its output is dark; the app exits after the selected
+duration, or on Escape when message processing is active. Explicit culling state
+ensures the shader actually runs. Verify measured GPU duration in the observer.
+
+Set `DXMT_CONFIG='d3d11.preferredMaxFrameRate=60;dxgi.displayLinkPacing=true'`
+for the display-driven path, or `displayLinkPacing=false` for its control. Use the
+same window mode and workload for both. Optional `DXMT_PACING_TRACE=/absolute/base`
+records display updates and queue counters. This enables logging only.
+The old CPU timer-cap and alternative wait-mode controls are removed.
 
 For the optional observer, set `DYLD_INSERT_LIBRARIES` to its absolute dylib path
 and `PACING_TRACE_BASE` to an output filename prefix. It records original present

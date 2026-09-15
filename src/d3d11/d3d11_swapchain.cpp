@@ -151,8 +151,8 @@ public:
     present_semaphore_ = CreateSemaphore(nullptr, frame_latency,
                                          DXGI_MAX_SWAP_CHAIN_BUFFERS, nullptr);
 
-    // without this flag, there is still a DXGIDevice level of frame latency control
-    if (desc_.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT) {
+    display_pacing_ = Config::getInstance().getOption<bool>("dxgi.displayLinkPacing", false);
+    if (display_pacing_ || (desc_.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)) {
       frame_latency_fence_ = std::make_unique<CpuFence>();
       presentation_feedback_ = WMT::Reference<WMT::Object>(WMTPresentationFence_create());
       if (!presentation_feedback_)
@@ -206,9 +206,26 @@ public:
     ResizeBuffers(0, desc_.Width, desc_.Height, DXGI_FORMAT_UNKNOWN, desc_.Flags);
     if (!fullscreen_desc_.Windowed)
       EnterFullscreenMode(nullptr);
+    if (display_pacing_) {
+      const double fps = preferred_max_frame_rate ? preferred_max_frame_rate : init_refresh_rate_;
+      display_pacing_ = WMTPresentationFence_configureDisplayLink(presentation_feedback_, layer_weak_, fps, frame_latency);
+      if (!display_pacing_) WARN("Display-link pacing unavailable; using the original presentation path");
+    }
     if (presentation_feedback_) {
       presentation_thread_ = dxmt::thread([this] {
         env::setThreadName("dxmt-present-feedback");
+        if (display_pacing_) {
+          WMTFramePacingUpdate update{};
+          uint64_t previous_ready = 0;
+          while (WMTPresentationFence_waitUpdate(presentation_feedback_, update.version, &update)) {
+            frame_latency_fence_->signal(update.completed);
+            frame_start_fence_.signal(update.ready);
+            if ((desc_.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT) && update.ready > previous_ready)
+              ReleaseSemaphore(present_semaphore_, static_cast<LONG>(update.ready - previous_ready), nullptr);
+            previous_ready = update.ready;
+          }
+          return;
+        }
         uint64_t previous = 0;
         for (;;) {
           const auto completed = WMTPresentationFence_wait(presentation_feedback_, previous);
@@ -763,9 +780,24 @@ public:
                  preferred_max_frame_rate ? 1.0 / preferred_max_frame_rate : 0);
 
     auto &cmd_queue = device_->GetDXMTDevice().queue();
+    if (display_pacing_) {
+      // Ordinary presentation must honor the application's VSync request.
+      // The old minimum-duration path disables layer VSync; retaining that
+      // setting here would allow tearing even when Present requests VSync.
+      presenter->setDisplaySyncEnabled(SyncInterval != 0);
+      const uint32_t limit = (desc_.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)
+          ? frame_latency : cmd_queue.GetMaxLatency();
+      WMTPresentationFence_configureDisplayLink(presentation_feedback_, layer_weak_,
+          vsync_duration > 0 ? 1.0 / vsync_duration : 0.0, limit);
+      // Frame spacing is supplied before the next frame's input, rather than
+      // by holding this finished frame for another minimum-duration interval.
+      vsync_duration = 0;
+    }
     auto chunk = cmd_queue.CurrentChunk();
     chunk->signal_frame_latency_fence_ = cmd_queue.CurrentFrameSeq();
-    SyncFrame(++presentation_count_);
+    ++presentation_count_;
+    if (desc_.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)
+      SyncFrame(presentation_count_);
     if (target_) {
       auto output = static_cast<MTLDXGIOutput *>(target_.ptr());
       presenter->changeGammaRamp(output->GetGammaRamp());
@@ -797,11 +829,16 @@ public:
         this->UpdateStatistics(ctx.queue().statistics, ctx.currentFrameId());
       });
     }
+    if (display_pacing_)
+      WMTPresentationFence_submit(presentation_feedback_);
     device_context_->Commit();
 
     lock.unlock(); // since PresentBoundary() will and should only stall current thread
 
-    cmd_queue.PresentBoundary((desc_.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT) != 0);
+    const bool waitable = (desc_.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT) != 0;
+    cmd_queue.PresentBoundary(waitable || display_pacing_);
+    if (display_pacing_ && !waitable)
+      frame_start_fence_.wait(presentation_count_);
 
     return hr;
   };
@@ -949,7 +986,7 @@ public:
     if (max_latency == 0 || max_latency > DXGI_MAX_SWAP_CHAIN_BUFFERS) {
       return E_INVALIDARG;
     }
-    if (max_latency > frame_latency) {
+    if (!display_pacing_ && max_latency > frame_latency) {
       ReleaseSemaphore(present_semaphore_, max_latency - frame_latency,
                        nullptr);
     }
@@ -1063,6 +1100,8 @@ private:
   std::unique_ptr<CpuFence> frame_latency_fence_;
   WMT::Reference<WMT::Object> presentation_feedback_;
   dxmt::thread presentation_thread_;
+  CpuFence frame_start_fence_;
+  bool display_pacing_ = false;
   HWND hWnd;
   HMONITOR monitor_;
   Com<IDXGIOutput1> target_;

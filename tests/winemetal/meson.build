@@ -4,7 +4,7 @@ presentation_feedback_test = executable('presentation-feedback-test',
   include_directories : include_directories('../../src/winemetal/unix'),
   link_with : presentation_feedback,
   link_args : ['-arch', native_compiler_arch],
-  dependencies : dependency('appleframeworks', modules: ['Foundation', 'Metal'], native: true),
+  dependencies : dependency('appleframeworks', modules: ['Foundation', 'Metal', 'Cocoa', 'QuartzCore'], native: true),
   native : true,
   install : false,
 )
