@@ -766,6 +766,7 @@ public:
     auto chunk = cmd_queue.CurrentChunk();
     chunk->signal_frame_latency_fence_ = cmd_queue.CurrentFrameSeq();
     SyncFrame(++presentation_count_);
+    auto presentation_feedback = presentation_feedback_ ? presentation_feedback_ : cmd_queue.DevicePresentationFeedback();
     if (target_) {
       auto output = static_cast<MTLDXGIOutput *>(target_.ptr());
       presenter->changeGammaRamp(output->GetGammaRamp());
@@ -773,7 +774,7 @@ public:
     if constexpr (EnableMetalFX) {
       chunk->emitcc([
         this, vsync_duration, backbuffer = backbuffer_->texture(),
-        presentation_feedback = presentation_feedback_,
+        presentation_feedback = presentation_feedback,
         upscaled = upscaled_backbuffer_->texture(),
         scaler = this->metalfx_scaler, state = presenter->synchronizeLayerProperties()
       ](ArgumentEncodingContext &ctx) mutable {
@@ -790,7 +791,7 @@ public:
     } else {
       chunk->emitcc([
         this, vsync_duration, state = presenter->synchronizeLayerProperties(),
-        presentation_feedback = presentation_feedback_,
+        presentation_feedback = presentation_feedback,
         backbuffer = backbuffer_->texture()
       ](ArgumentEncodingContext &ctx) mutable {
         ctx.present(backbuffer, presenter, vsync_duration, state.metadata, presentation_feedback);
@@ -801,7 +802,7 @@ public:
 
     lock.unlock(); // since PresentBoundary() will and should only stall current thread
 
-    cmd_queue.PresentBoundary();
+    cmd_queue.PresentBoundary((desc_.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT) != 0);
 
     return hr;
   };

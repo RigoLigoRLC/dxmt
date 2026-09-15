@@ -1242,7 +1242,9 @@ public:
   }
 
   HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(UINT MaxLatency) override {
-    cmd_queue_.SetMaxLatency(MaxLatency);
+    if (MaxLatency > 16)
+      return E_INVALIDARG;
+    cmd_queue_.SetMaxLatency(MaxLatency ? MaxLatency : 3);
     return S_OK;
   }
 

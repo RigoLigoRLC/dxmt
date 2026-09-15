@@ -59,6 +59,7 @@ int main(int argc, char **argv) {
   int wait_mode=argc>5?atoi(argv[5]):0;
   double cpu_cap=argc>6?atof(argv[6]):0;
   int sync_interval=argc>7?atoi(argv[7]):1;
+  double logic_ms=argc>8?atof(argv[8]):0;
   QueryPerformanceFrequency(&frequency);
   HINSTANCE instance=GetModuleHandleA(NULL);
   WNDCLASSA wc={0}; wc.lpfnWndProc=window_proc; wc.hInstance=instance;
@@ -83,7 +84,7 @@ int main(int argc, char **argv) {
   IDXGISwapChain_Release(base);
   IDXGIDevice1 *dxgi_device=NULL;
   check(ID3D11Device_QueryInterface(device,&IID_IDXGIDevice1,(void**)&dxgi_device),"DXGI device");
-  check(IDXGIDevice1_SetMaximumFrameLatency(dxgi_device,1),"Device latency");
+  check(IDXGIDevice1_SetMaximumFrameLatency(dxgi_device,waitable?1:latency),"Device latency");
   IDXGIDevice1_Release(dxgi_device);
   if (waitable) check(IDXGISwapChain2_SetMaximumFrameLatency(swap,latency),"Swapchain latency");
   HANDLE ready=IDXGISwapChain2_GetFrameLatencyWaitableObject(swap);
@@ -93,7 +94,7 @@ int main(int argc, char **argv) {
   check(ID3D11Device_CreateRenderTargetView(device,(ID3D11Resource*)buffer,NULL,&target),"Create target");
   FILE *csv=fopen(output,"w"); if (!csv) return 3;
   setvbuf(csv,NULL,_IOLBF,0);
-  fprintf(csv,"frame,elapsed_s,wait_ms,wake_unix_s,present_ms,present_begin_unix_s,present_end_unix_s\n");
+  fprintf(csv,"frame,elapsed_s,wait_ms,wake_unix_s,present_ms,present_begin_unix_s,present_end_unix_s,input_unix_s,logic_end_unix_s,input_sequence\n");
   HANDLE timer=CreateWaitableTimerExA(NULL,NULL,0x2,TIMER_ALL_ACCESS);
   if (!timer) timer=CreateWaitableTimerA(NULL,FALSE,NULL);
   if (cpu_cap>0) timeBeginPeriod(1);
@@ -119,14 +120,21 @@ int main(int argc, char **argv) {
     }
     double woke=seconds(), wall=unix_seconds();
     if (!pump_messages()) break;
-    float color[4]={0.05f+(frame%120)/200.0f,0.12f,0.2f,1};
+    // Model the engine boundary explicitly: input is sampled only after its
+    // pacing wait. Optional CPU work is constant across every frame and case.
+    double input_wall=unix_seconds();
+    unsigned long input_sequence=GetTickCount();
+    double logic_deadline=seconds()+logic_ms/1000.0;
+    while (seconds()<logic_deadline) YieldProcessor();
+    double logic_end=unix_seconds();
+    float color[4]={0.05f+(input_sequence%120)/200.0f,0.12f,0.2f,1};
     ID3D11DeviceContext_ClearRenderTargetView(context,target,color);
     before=seconds();
     double present_begin=unix_seconds();
     check(IDXGISwapChain2_Present(swap,sync_interval,0),"Present");
     double present_end=unix_seconds();
-    fprintf(csv,"%u,%.9f,%.6f,%.9f,%.6f,%.9f,%.9f\n",frame,woke-start,
-        (woke-wait_begin)*1000,wall,(seconds()-before)*1000,present_begin,present_end);
+    fprintf(csv,"%u,%.9f,%.6f,%.9f,%.6f,%.9f,%.9f,%.9f,%.9f,%lu\n",frame,woke-start,
+        (woke-wait_begin)*1000,wall,(seconds()-before)*1000,present_begin,present_end,input_wall,logic_end,input_sequence);
     ++frame;
   }
   fprintf(stdout,"waitable=%d frames=%u elapsed=%.3f\n",waitable,frame,seconds()-start);
