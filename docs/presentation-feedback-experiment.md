@@ -1,148 +1,90 @@
-# HSR presentation-feedback experiment
+# Display-driven pacing experiment
 
-This branch collects the presentation-latency experiment deployed with Yaagl and
-DXMT v0.80. It starts from tag `v0.80`, matching the installed binaries.
+Windows gets a freshly made frame onto the screen quickly. We now have a native
+Metal reference that does so on this Mac while preserving 60 FPS and even spacing.
+The next step is to make display timing control when the game produces its next
+frame through DXGI, using this measured reference.
 
-## Changes
+## Verified reference
 
-- `src/dxmt/dxmt_command_queue.hpp`: change the default device maximum frame latency
-  from 3 to 1. This corresponds to the creation-time latency request used in the
-  reference experiment. Applications can still change the value through DXGI.
-- `src/winemetal/unix/presentation_bridge.c`: associate each presented Metal command
-  buffer with a completion group and complete it from `addPresentedHandler`.
-  For status/wait calls originating in `winemetal.so`, GPU completion also waits
-  for presentation. Other callers continue to observe Metal's actual GPU status.
-  Skipped presentations also complete the group. A 500 ms fallback releases a
-  missing callback wait and prints a diagnostic.
-- `src/winemetal/unix/meson.build`: compile the bridge with ARC in its own static
-  target and link the entire target into WineMetal so its constructor is retained.
-  Existing WineMetal sources retain their manual memory-management compilation.
+On an M5 Pro, macOS 26.6.2, in the original 120-Hz/ProMotion mode, ordinary
+CADisplayLink at 60 callbacks/s wakes the render thread before input sampling.
+The renderer then uses ordinary presentation on an independently acquired drawable.
+It retains three drawables, acquires the next drawable at the end of the previous
+iteration, and bounds outstanding presentations at two using presented callbacks.
 
-The bridge activates automatically when WineMetal loads. Set
-`DXMT_PRESENTATION_BRIDGE=0` to disable the hook; the changed queue default remains 1.
-The Metal drawable pool and preferred frame-rate cap are unchanged.
+The 45-second run produced 60 FPS; all 2519 warm display intervals were 16.67 ms.
+Median present delay was 5.76 ms and input sampling to reported display was 7.92 ms.
+Instruments independently matched 660/660 warm frames to distinct Direct hardware
+display events with even spacing. The independent-timer control retained uneven
+spacing. Explicit future target times were steady but increased delay.
 
-## Relationship to the installed experiment
+The fixed physical 60-Hz boundary test remained around 30.70-ms present delay.
+This is not a universal Metal latency floor or a completed DXMT/HSR fix. Workload
+was a constant 2-ms CPU simulation and light GPU clear. More expensive or variable
+rendering, window transitions, and the Wine game loop remain unverified.
 
-The installed quick patch changed the constructor instruction at file offset
-`0x4244a` in v0.80's builtin `d3d11.dll` from
-`c7 86 40 2d 00 00 03 00 00 00` to
-`c7 86 40 2d 00 00 01 00 00 00`, and updated the PE checksum. The store initializes
-`CommandQueue::max_latency_` at member offset `0x2d40`, also used by the device
-maximum-frame-latency getter and setter.
+The two-mode reproducer is in [tests/presentation/native](../tests/presentation/native).
+The original measurements and Instruments recordings are retained in the local
+task's `outputs/native-display-pacing/` directory; recordings are not build inputs.
 
-Its `winemetal.so` has an added Mach-O load command for a standalone
-`dxmt_presentation_bridge.dylib`, built from the same Objective-C bridge.
-This branch expresses those changes as source and links the bridge directly into
-WineMetal, avoiding a machine-specific dylib path in a rebuilt installation.
-This source integration has not replaced the installed binaries.
+## Retained DXMT changes
 
-No custom HSR launcher, registry edits, prefix copies, or game-file changes are
-part of this branch. Yaagl continues to perform its usual game startup steps.
+- The waitable swapchain returns frame capacity after actual presentation or a
+  dropped/failed drawable, rather than while recording a future presentation.
+- Native callback state has explicit cancellation and ownership. GPU success
+  does not return presentation capacity; error and presentation callbacks return
+  it at most once. A Wine-owned worker performs Win32 signaling.
+- Waitable swapchains use their own frame capacity without the separate device
+  GPU throttle. Nonwaitable swapchains retain the original GPU-completion throttle.
+- The device default is restored to three frames. DXGI's zero-means-default and
+  upper-limit validation are retained.
+- The encoder uses WaitOnAddress on Windows to avoid the measured polling delay
+  in this toolchain's atomic wait fallback.
 
-## Observations
+The waitable correction fixes an early signal, but waiting only for completed
+presentations did not by itself deliver the desired frame-start schedule. The
+native display-driven wakeup is not yet wired into DXMT.
 
-The controlled D3D11 reference used the same device latency setting of 1 and the
-same 60 FPS cap in both cases. After excluding the first three seconds:
+## Removed experiments
 
-| Case | Displayed FPS | Present request to display | GPU completion to display |
-| --- | ---: | ---: | ---: |
-| Original DXMT | 58.29 | 49.21 ms | 48.74 ms |
-| Presentation callback bridge | 58.81 | 32.92 ms | 32.51 ms |
+- The automatically loaded Objective-C hook that extended GPU status/wait calls
+  until presentation, including its timeout fallback.
+- The forced one-frame device default and optional device-wide wait for actual
+  presentations, which reduced queued work but could reduce frame rate.
+- Observer overrides for presentation methods, drawable count, VSync, and pending
+  frames; the remaining observer only records timing.
+- The older CAMetalDisplayLink demo, layer-setting runner, old implementation plan,
+  and superseded timing guide. The native reference keeps only the successful
+  display wakeup and independent-timer control.
+- The D3D11 diagnostic's external timer cap and alternative wait modes.
 
-The bridge recorded 867 presentation waits and no callback timeouts in that run.
-`nextDrawable()` waiting fell from about 16.68 ms to 0.04 ms, with three drawables
-retained. A strict wait for the current frame lowered delay to about 23.55 ms but
-reduced displayed throughput to about 40.46 FPS, so it was rejected.
+The pre-cleanup state, including the previously uncommitted changes, is preserved
+in commit `d79e6ff`. The original `hsr-presentation-feedback` branch is unchanged.
+No game, Yaagl runtime, or original Wineprefix files are changed by this cleanup.
 
-After installation into Yaagl's DXMT bundle, the user reported about 32 ms and
-then supplied an HSR HUD snapshot showing 60 FPS, 26.98 ms present delay, 8.08 ms
-GPU time, and Composition: Composited. These HSR readings are user observations,
-not a controlled same-scene comparison. They do not establish physical input to
-photon latency. A separate Windows capture showed about 3.1 ms between GPU
-completion and display; it does not identify the swapchain's buffer count.
+## Next work
 
-## What remains
+Bring the native frame-start signal to the game thread through DXGI. Keep actual
+presentation counts and GPU completion distinct. Verify input age, distinct FPS,
+displayed intervals, and outstanding frames together before installing anything.
+Do not reintroduce 120-callback skipping, layer-property sweeps, or timed-present
+offsets to compensate for an unexplained schedule.
 
-1. Separate presentation progress from GPU completion. The current hook delays
-   `CommandQueue::WaitForFinishThread`, including resource retirement and the CPU
-   coherence signal. A proper implementation needs an independent presentation
-   fence so GPU-completed resources can be reused promptly.
-2. Continue validation of the separate waitable-swapchain fix below after the
-   completed basic Wine comparison; see the follow-up timing findings.
-   The installed quick binary patch still contains only the device-level bridge;
-   rebuilding this branch is required to get the swapchain fix.
-3. Reduce the remaining queue without losing the 60 FPS cadence. In this version,
-   `PresentBoundary()` waits after submission; a device limit of 1 permits two
-   submissions before the first wait. Waiting for the current frame lost FPS in
-   the reference. Investigate the presentation schedule and measured render-time
-   variation; do not assume a fixed render budget or a Metal latency floor.
-4. Check variable workloads, multiple swapchains, occlusion, fullscreen transitions,
-   callback loss, and shutdown. The native hook was exercised on x86_64 Wine on this
-   Mac; other GPUs and architectures have not been verified.
+## Cleanup verification
 
-The HUD's GPU and present-delay aggregates do not by themselves partition the
-remaining delay into rendering, queued images, and display scheduling.
+The full Wine cross-build and builtin-DLL postprocessing passed. All five native
+presentation-counter checks passed. The built WineMetal library has no old bridge
+initializer or destructor and still exports the presentation-counter functions.
+The passive observer and simplified D3D11 diagnostic compiled successfully.
 
-## Validation and rebuilding
+In the isolated diagnostic Wine runtime, both eight-second smoke runs exited
+normally: the waitable path recorded 321 frames/callbacks and the legacy path
+487 frames/callbacks. These check loading, progress, and teardown, not a claim of
+low game latency. Dropped startup/teardown presentations remain in the raw logs.
 
-The standalone bridge was compiled and exercised during the original experiment.
-The complete DXMT Wine cross-build now succeeds using llvm-mingw 21.1.8,
-Wine SDK 8.16, native LLVM 15, and Xcode's Metal toolchain. The callback suite and
-actual old/new Wine binaries have been exercised. See
-[presentation timing findings](presentation-timing-findings.md) for the encoder
-wake-up regression, measured presentation schedules, and remaining validation.
-
-The branch contains no compiled binaries. Build DXMT through its normal Meson
-configuration once those dependencies are available. For a native compile check:
-
-```sh
-clang -arch x86_64 -ObjC -fobjc-arc -fblocks -O2 -c \
-  src/winemetal/unix/presentation_bridge.c -o /tmp/presentation_bridge.o
-```
-
-## Waitable swapchain follow-up
-
-The source branch now also fixes the separate waitable-object path. `Present1`
-no longer releases `present_semaphore_` while recording `ctx.present()`, and
-`SyncFrameState` no longer reports completion when the encoder lambda is destroyed.
-`PresentData` retains a native presentation counter and registers a ticket with
-the actual Metal drawable before scheduling presentation. Successful GPU completion
-leaves the ticket pending; a presented/dropped callback or command-buffer error
-returns one credit. Duplicate error/drop callbacks cannot return two credits.
-
-Each waitable swapchain owns a Wine-created worker that waits for counter changes,
-releases semaphore credits and advances its internal admission fence. Cancellation
-wakes and joins this worker before its semaphore is closed. Late Metal callbacks
-own only retained native state. Swapchains without the waitable flag allocate no
-counter or worker. Both ordinary and MetalFX presentation paths carry the counter.
-
-This new path does not intercept GPU completion or delay GPU cleanup. The older
-experimental device-level bridge remains independently enabled on this branch;
-use `DXMT_PRESENTATION_BRIDGE=0` to isolate the waitable fix when rebuilding/testing.
-Existing WineMetal unix-call indices are preserved, with four calls appended to
-both the 64-bit and WoW64 tables. Rebuild and deploy matching `d3d11.dll`,
-`winemetal.dll` and `winemetal.so`; mixing the new DLL with an old Unix library is
-not supported. No updated binaries have been installed into Yaagl for this fix.
-
-The callback regression suite uses controlled drawable/command-buffer objects to
-separate recording, GPU completion and display completion. It covers normal GPU
-completion remaining blocked, display/drop release, error/drop duplicate handling,
-out-of-order callbacks, cancellation with late callbacks, and independent counters.
-A negative-control build that returns a credit during registration fails the first
-blocked-wait assertion. This checks the failure mechanism, not an end-to-end run
-of the original DXMT binary. Run with Meson's `enable_tests` option, or directly:
-
-```sh
-clang -arch x86_64 -ObjC -fobjc-arc -fblocks -Wall -Wextra -Werror \
-  -Isrc/winemetal/unix tests/winemetal/presentation_feedback.c \
-  src/winemetal/unix/presentation_feedback.c \
-  -framework Foundation -framework Metal -o /tmp/dxmt-presentation-feedback-test
-/tmp/dxmt-presentation-feedback-test
-```
-
-The callback tests and real Wine comparisons do not establish an HSR latency
-improvement. The full cross-build and basic Wine presentation checks have now
-passed; transitions and the proposed native scheduling configuration under a
-complete variable-GPU workload still need validation. The local AddressSanitizer runtime hung during its own
-startup before `main`; that attempt provides no sanitizer coverage.
+The trimmed native reference was rebuilt and rerun for 14 seconds: 660/660 warm
+frames displayed, all 659 intervals at 16.67 ms, 60 FPS, 5.68-ms median present
+delay, and 7.84-ms median input-to-display. No warm display-link updates were
+missed. The original Instruments verification is unchanged; no new Instruments
+capture was needed for removal of the unused modes.

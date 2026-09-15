@@ -6,6 +6,17 @@ Explain what the game, GPU, operating system, and display are doing before intro
 
 Give a clear verdict for each hypothesis: supported, rejected, or unresolved, and explain what the evidence establishes. An observation without a cause is not a root-cause finding. A lower latency number at a lower frame rate is not a completed solution. Do not call a previous conversation's assumption wrong without evidence that contradicts it.
 
+# Current experiment branch
+
+Read `docs/presentation-feedback-experiment.md` and `tests/presentation/README.md`
+first. The native reference under `tests/presentation/native/` now achieves both
+low delay and even 60-FPS spacing in ProMotion mode with ordinary CADisplayLink at
+60 callbacks/s and ordinary drawable presentation. It is not yet connected to
+DXGI. Fixed physical 60 Hz remains slower. The old GPU-status hook, forced
+one-frame default, strict device-wide presentation wait, and diagnostic timing
+overrides were removed on `experiment/display-driven-pacing`; do not assume they
+are still active or require disabling. The earlier state is preserved at d79e6ff.
+
 # Investigation goal
 
 Find and fix why display progress does not correctly control when the game samples input and makes its next frame through DXMT. Trace display progress to the game's wakeup, fresh input, simulation, rendering, and presentation. The goal is fresher frames reaching the screen while preserving the intended frame rate.

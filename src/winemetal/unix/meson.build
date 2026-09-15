@@ -24,17 +24,8 @@ winemetal_unix_ld_args = [
 ]
 winemetal_unix_link_depends = []
 
-# Keep ARC local to the callback bridge. The existing WineMetal sources use
-# manual retain/release. Use the native C compiler in Objective-C mode so this
-# target inherits the same -arch flags as the rest of WineMetal.
-presentation_bridge = static_library('presentation_bridge',
-  'presentation_bridge.c',
-  c_args : ['-ObjC', '-fobjc-arc', '-fblocks'],
-  native : true,
-  pic : true,
-  install : false,
-)
-
+# Keep ARC local to presentation callback state; existing WineMetal sources
+# use manual retain/release. Preserve the native compiler's architecture flags.
 presentation_feedback = static_library('presentation_feedback',
   'presentation_feedback.c',
   c_args : ['-ObjC', '-fobjc-arc', '-fblocks'],
@@ -46,7 +37,7 @@ presentation_feedback = static_library('presentation_feedback',
 shared_library('winemetal', winemetal_unix_src,
   name_prefix         : '',
   dependencies        : [ airconv_dep_darwin ],
-  link_whole          : [ presentation_bridge, presentation_feedback ],
+  link_whole          : [ presentation_feedback ],
   include_directories : dxmt_include_path,
   c_args              : ['-ObjC'],
   link_args           : winemetal_unix_ld_args,

@@ -13,8 +13,6 @@ static atomic_ulong sequence;
 static _Thread_local int nesting;
 static IMP original_plain, original_minimum, original_at;
 static IMP original_next;
-static int drawable_count, limit_pending, force_sync=-1, present_mode;
-static dispatch_semaphore_t presentation_slots;
 static FILE *next_trace;
 static void observe(id<MTLCommandBuffer> command, id<MTLDrawable> drawable, const char *kind, double duration, double target) {
     if (!trace || nesting) return;
@@ -30,21 +28,13 @@ static void observe(id<MTLCommandBuffer> command, id<MTLDrawable> drawable, cons
         const double presented_wall = presented > 0 ? wall_now - (CACurrentMediaTime()-presented) : 0;
         fprintf(trace, "%lu,%s,%.9f,%.9f,%.6f,%.6f,%.9f,%.9f,%.6f,%.9f,%.9f,%.6f,%.9f\n", index, kind, requested, presented,
                 presented > 0 ? (presented-requested)*1000 : -1.0, duration*1000,command.GPUStartTime,command.GPUEndTime,presented > 0 && command.GPUEndTime > 0 ? (presented-command.GPUEndTime)*1000 : -1.0,presented_wall,requested_wall,presented>0?(CACurrentMediaTime()-presented)*1000:-1.0,target);
-        if (limit_pending) dispatch_semaphore_signal(presentation_slots);
     }];
 }
 static id next_drawable(CAMetalLayer *self, SEL selector) {
-    if (drawable_count && self.maximumDrawableCount != (NSUInteger)drawable_count)
-        self.maximumDrawableCount = drawable_count;
-    if (force_sync >= 0 && self.displaySyncEnabled != (BOOL)force_sync)
-        self.displaySyncEnabled=(BOOL)force_sync;
-    double enter = CACurrentMediaTime();
-    if (limit_pending) dispatch_semaphore_wait(presentation_slots,DISPATCH_TIME_FOREVER);
     double before_next = CACurrentMediaTime();
     id result = ((id(*)(id,SEL))original_next)(self,selector);
     double after_next = CACurrentMediaTime();
-    if (next_trace) fprintf(next_trace,"%.9f,%.6f,%.6f,%lu,%d,%d\n",enter,(before_next-enter)*1000,(after_next-before_next)*1000,(unsigned long)self.maximumDrawableCount,self.displaySyncEnabled,self.presentsWithTransaction);
-    if (!result && limit_pending) dispatch_semaphore_signal(presentation_slots);
+    if (next_trace) fprintf(next_trace,"%.9f,%.6f,%lu,%d,%d\n",before_next,(after_next-before_next)*1000,(unsigned long)self.maximumDrawableCount,self.displaySyncEnabled,self.presentsWithTransaction);
     return result;
 }
 static void plain(id self, SEL sel, id<MTLDrawable> drawable) {
@@ -52,16 +42,9 @@ static void plain(id self, SEL sel, id<MTLDrawable> drawable) {
     ((void(*)(id,SEL,id))original_plain)(self,sel,drawable); nesting--;
 }
 static void minimum(id self, SEL sel, id<MTLDrawable> drawable, double duration) {
-    double requested_duration=present_mode?0:duration;
-    double target=present_mode==2?CACurrentMediaTime():0;
-    observe(self,drawable,present_mode==1?"plain-override":present_mode==2?"at-now-override":"minimum",requested_duration,target);
+    observe(self,drawable,"minimum",duration,0);
     nesting++;
-    if (present_mode==1)
-        ((void(*)(id,SEL,id))original_plain)(self,@selector(presentDrawable:),drawable);
-    else if (present_mode==2)
-        ((void(*)(id,SEL,id,double))original_at)(self,@selector(presentDrawable:atTime:),drawable,target);
-    else
-        ((void(*)(id,SEL,id,double))original_minimum)(self,sel,drawable,requested_duration);
+    ((void(*)(id,SEL,id,double))original_minimum)(self,sel,drawable,duration);
     nesting--;
 }
 static void at(id self, SEL sel, id<MTLDrawable> drawable, double when) {
@@ -89,16 +72,11 @@ __attribute__((constructor)) static void initialize(void) {
         if (m) original_minimum = method_setImplementation(m,(IMP)minimum);
         m = class_getInstanceMethod(type,@selector(presentDrawable:atTime:));
         if (m) original_at = method_setImplementation(m,(IMP)at);
-        force_sync=getenv("PACING_DISPLAY_SYNC")?atoi(getenv("PACING_DISPLAY_SYNC")):-1;
-        present_mode=getenv("PACING_PRESENT_MODE")?atoi(getenv("PACING_PRESENT_MODE")):0;
-        drawable_count = getenv("PACING_DRAWABLE_COUNT") ? atoi(getenv("PACING_DRAWABLE_COUNT")) : 0;
-        limit_pending = getenv("PACING_MAX_PENDING") ? atoi(getenv("PACING_MAX_PENDING")) : 0;
-        if (limit_pending) presentation_slots = dispatch_semaphore_create(limit_pending);
         snprintf(path,sizeof(path),"%s-%d-next.csv",base,getpid());
         next_trace = fopen(path,"w");
         if (next_trace) {
             setvbuf(next_trace,NULL,_IOLBF,0);
-            fprintf(next_trace,"request_s,presentation_wait_ms,next_drawable_wait_ms,drawable_count,display_sync_enabled,presents_with_transaction\n");
+            fprintf(next_trace,"request_s,next_drawable_wait_ms,drawable_count,display_sync_enabled,presents_with_transaction\n");
         }
         m = class_getInstanceMethod([CAMetalLayer class],@selector(nextDrawable));
         if (m) original_next = method_setImplementation(m,(IMP)next_drawable);

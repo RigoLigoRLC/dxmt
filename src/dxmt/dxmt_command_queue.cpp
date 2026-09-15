@@ -4,7 +4,6 @@
 #include "util_env.hpp"
 #include "util_atomic_wait.hpp"
 #include "util_win32_compat.h"
-#include "config/config.hpp"
 #include <atomic>
 
 #define ASYNC_ENCODING 1
@@ -43,8 +42,6 @@ CommandQueue::CommandQueue(WMT::Device device) :
     chunk.reset();
   };
   event = device.newSharedEvent();
-  if (Config::getInstance().getOption<bool>("dxgi.devicePresentationFeedback", false))
-    device_presentation_feedback_ = WMT::Reference<WMT::Object>(WMTPresentationFence_create());
 
   std::string env = env::getEnvVar("DXMT_CAPTURE_FRAME");
 
@@ -58,8 +55,6 @@ CommandQueue::CommandQueue(WMT::Device device) :
 
 CommandQueue::~CommandQueue() {
   TRACE("Destructing command queue");
-  if (device_presentation_feedback_)
-    WMTPresentationFence_cancel(device_presentation_feedback_);
   stopped.store(true);
   ready_for_encode++;
   NotifyAtomicChange(ready_for_encode);

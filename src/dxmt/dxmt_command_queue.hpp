@@ -150,10 +150,7 @@ private:
   std::array<CommandChunk, kCommandChunkCount> chunks;
   uint64_t encoder_seq = 1;
   uint64_t frame_count = 0;
-  uint32_t max_latency_ = 1;
-  WMT::Reference<WMT::Object> device_presentation_feedback_;
-  uint64_t device_presents_ = 0;
-  uint64_t device_presented_ = 0;
+  uint32_t max_latency_ = 3;
 
   dxmt::thread encodeThread;
   dxmt::thread finishThread;
@@ -250,23 +247,7 @@ public:
       statistics.at(frame_count).latency = max_latency_;
       return;
     }
-    if (device_presentation_feedback_) {
-      const auto submitted = ++device_presents_;
-      // Before returning to the application's next input/simulation iteration,
-      // leave room for that frame. Waiting for N-L would allow one extra frame
-      // to be generated before Present finally blocks with the queue full.
-      const auto required = submitted >= max_latency_ ? submitted - max_latency_ + 1 : 0;
-      const auto t0 = clock::now();
-      while (device_presented_ < required) {
-        const auto completed = WMTPresentationFence_wait(device_presentation_feedback_, device_presented_);
-        if (completed == UINT64_MAX) break;
-        device_presented_ = completed;
-      }
-      statistics.at(frame_count).present_latency_interval += clock::now() - t0;
-      statistics.at(frame_count).latency = max_latency_;
-      return;
-    }
-    // Original GPU-completion throttle, retained as the diagnostic baseline.
+    // Nonwaitable swapchains retain the original GPU-completion throttle.
     if (likely(frame_count > max_latency_)) {
       auto t0 = clock::now();
       frame_latency_fence_.wait(frame_count - max_latency_);
@@ -274,10 +255,6 @@ public:
       statistics.at(frame_count).present_latency_interval += (t1 - t0);
     }
     statistics.at(frame_count).latency = max_latency_;
-  }
-
-  WMT::Reference<WMT::Object> DevicePresentationFeedback() const {
-    return device_presentation_feedback_;
   }
 
   uint32_t GetMaxLatency() { return max_latency_; }

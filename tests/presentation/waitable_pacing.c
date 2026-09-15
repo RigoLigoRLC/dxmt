@@ -1,7 +1,6 @@
 #define COBJMACROS
 #define INITGUID
 #include <windows.h>
-#include <mmsystem.h>
 #include <d3d11.h>
 #include <dxgi1_3.h>
 #include <stdio.h>
@@ -35,16 +34,14 @@ static int pump_messages(void) {
   }
   return 1;
 }
-static DWORD wait_for_frame(HANDLE ready, int mode) {
+static DWORD wait_for_frame(HANDLE ready) {
   const double deadline=seconds()+2;
   for (;;) {
     DWORD timeout=(DWORD)((deadline-seconds())*1000);
     if (seconds()>=deadline) return WAIT_TIMEOUT;
-    DWORD result = mode==2
-        ? MsgWaitForMultipleObjectsEx(1,&ready,timeout,QS_ALLINPUT,MWMO_INPUTAVAILABLE|MWMO_ALERTABLE)
-        : WaitForSingleObjectEx(ready,timeout,mode==1);
+    DWORD result = MsgWaitForMultipleObjectsEx(1,&ready,timeout,QS_ALLINPUT,MWMO_INPUTAVAILABLE|MWMO_ALERTABLE);
     if (result==WAIT_IO_COMPLETION) continue;
-    if (mode==2 && result==WAIT_OBJECT_0+1) {
+    if (result==WAIT_OBJECT_0+1) {
       if (!pump_messages()) return WAIT_FAILED;
       continue;
     }
@@ -56,10 +53,8 @@ int main(int argc, char **argv) {
   double duration=argc>2?atof(argv[2]):12;
   int waitable=argc>3?atoi(argv[3]):1;
   int latency=argc>4?atoi(argv[4]):1;
-  int wait_mode=argc>5?atoi(argv[5]):0;
-  double cpu_cap=argc>6?atof(argv[6]):0;
-  int sync_interval=argc>7?atoi(argv[7]):1;
-  double logic_ms=argc>8?atof(argv[8]):0;
+  int sync_interval=argc>5?atoi(argv[5]):1;
+  double logic_ms=argc>6?atof(argv[6]):2;
   QueryPerformanceFrequency(&frequency);
   HINSTANCE instance=GetModuleHandleA(NULL);
   WNDCLASSA wc={0}; wc.lpfnWndProc=window_proc; wc.hInstance=instance;
@@ -95,27 +90,10 @@ int main(int argc, char **argv) {
   FILE *csv=fopen(output,"w"); if (!csv) return 3;
   setvbuf(csv,NULL,_IOLBF,0);
   fprintf(csv,"frame,elapsed_s,wait_ms,wake_unix_s,present_ms,present_begin_unix_s,present_end_unix_s,input_unix_s,logic_end_unix_s,input_sequence\n");
-  HANDLE timer=CreateWaitableTimerExA(NULL,NULL,0x2,TIMER_ALL_ACCESS);
-  if (!timer) timer=CreateWaitableTimerA(NULL,FALSE,NULL);
-  if (cpu_cap>0) timeBeginPeriod(1);
-  double next_start=seconds();
   unsigned frame=0; int running=1; const double start=seconds();
   while (running && seconds()-start<duration) {
-    if (cpu_cap>0) {
-      double now;
-      while ((now=seconds())<next_start) {
-        LARGE_INTEGER due; due.QuadPart=-(LONGLONG)((next_start-now)*10000000);
-        if (due.QuadPart==0) break;
-        SetWaitableTimer(timer,&due,0,NULL,NULL,FALSE);
-        WaitForSingleObject(timer,1000);
-      }
-      // Advance the target, not the actual wake time: timer overshoot must not
-      // lower the requested rate. Skip missed slots instead of catch-up bursts.
-      next_start+=1.0/cpu_cap;
-      while (next_start<=seconds()) next_start+=1.0/cpu_cap;
-    }
     double before=seconds(), wait_begin=before;
-    if (ready && wait_for_frame(ready,wait_mode)!=WAIT_OBJECT_0) {
+    if (ready && wait_for_frame(ready)!=WAIT_OBJECT_0) {
       fprintf(stderr,"Waitable object timeout at frame %u\n",frame); return 4;
     }
     double woke=seconds(), wall=unix_seconds();
@@ -139,8 +117,6 @@ int main(int argc, char **argv) {
   }
   fprintf(stdout,"waitable=%d frames=%u elapsed=%.3f\n",waitable,frame,seconds()-start);
   fclose(csv);
-  if (cpu_cap>0) timeEndPeriod(1);
-  CloseHandle(timer);
   if (ready) CloseHandle(ready);
   ID3D11RenderTargetView_Release(target); ID3D11Texture2D_Release(buffer);
   IDXGISwapChain2_Release(swap);

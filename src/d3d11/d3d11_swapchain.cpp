@@ -766,7 +766,6 @@ public:
     auto chunk = cmd_queue.CurrentChunk();
     chunk->signal_frame_latency_fence_ = cmd_queue.CurrentFrameSeq();
     SyncFrame(++presentation_count_);
-    auto presentation_feedback = presentation_feedback_ ? presentation_feedback_ : cmd_queue.DevicePresentationFeedback();
     if (target_) {
       auto output = static_cast<MTLDXGIOutput *>(target_.ptr());
       presenter->changeGammaRamp(output->GetGammaRamp());
@@ -774,7 +773,7 @@ public:
     if constexpr (EnableMetalFX) {
       chunk->emitcc([
         this, vsync_duration, backbuffer = backbuffer_->texture(),
-        presentation_feedback = presentation_feedback,
+        presentation_feedback = presentation_feedback_,
         upscaled = upscaled_backbuffer_->texture(),
         scaler = this->metalfx_scaler, state = presenter->synchronizeLayerProperties()
       ](ArgumentEncodingContext &ctx) mutable {
@@ -791,7 +790,7 @@ public:
     } else {
       chunk->emitcc([
         this, vsync_duration, state = presenter->synchronizeLayerProperties(),
-        presentation_feedback = presentation_feedback,
+        presentation_feedback = presentation_feedback_,
         backbuffer = backbuffer_->texture()
       ](ArgumentEncodingContext &ctx) mutable {
         ctx.present(backbuffer, presenter, vsync_duration, state.metadata, presentation_feedback);
