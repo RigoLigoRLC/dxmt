@@ -18,26 +18,22 @@ clang -arch x86_64 -O2 -fobjc-arc -fblocks -Wall -Wextra \
 python3 tests/presentation/run_native.py /tmp/displaylink_deadlines /tmp/metal-timing
 ```
 
-The runner temporarily holds the display awake. Both cases aim to render 60 FPS.
-Baseline: 60 display-link updates/s, every update rendered, layer synchronization
-on. Candidate: 120 updates/s, every second update rendered, layer synchronization
-off. This candidate requires a display capable of 120 Hz; inspect measured cadence
-on other displays. This is an API experiment, not a DXMT scheduler implementation.
-Both cases vary real GPU work every 60 rendered frames. No fixed GPU-time estimate
-or delayed-submission heuristic is used by the runner.
+The runner temporarily holds the display awake. Both controls request 60 updates
+per second and render every update, comparing layer synchronization on and off.
+There is no callback-skipping or delayed-submission mode. Variable GPU work is
+optional but disabled; its tests are deferred until the complete feedback loop
+is implemented.
 
 Direct arguments are:
 
 ```
-displaylink_deadlines output.csv preferredLatency consumeCpuBudgetFraction updatesPerSecond everyNthUpdate layerSync variableGPU
+displaylink_deadlines output.csv preferredLatency framesPerSecond layerSync variableGPU
 ```
 
-`preferredLatency` is 1 or 2. `consumeCpuBudgetFraction=0` renders immediately;
-nonzero values are diagnostic experiments only, and can miss CPU deadlines due
-to wake-up jitter. Never treat a lower present-delay number from such a run as a
-successful scheduler fix without checking deadlines and input-sampling time.
-Timing starts after the first displayed frame, with a 45-second startup watchdog.
-The summary rejects runs without enough on-screen data.
+`preferredLatency` is 1 or 2. Timing starts after the first displayed frame,
+with a 45-second startup watchdog. The summary rejects runs without enough
+on-screen data. These controls measure the native API; they do not implement
+the D3D11 feedback loop.
 
 The CSV records the API-supplied CPU submission deadline, predicted presentation,
 actual `presentedTime`, the point before input polling, and actual GPU start/end.

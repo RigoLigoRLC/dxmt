@@ -4,19 +4,6 @@
 #include <stdio.h>
 #include <stdatomic.h>
 static atomic_bool duration_started;
-#include <mach/mach_time.h>
-
-static void wait_until_media_time(double target) {
-    mach_timebase_info_data_t scale; mach_timebase_info(&scale);
-    double remaining;
-    while ((remaining=target-CACurrentMediaTime())>0) {
-        uint64_t ticks=(uint64_t)(remaining*1e9*scale.denom/scale.numer);
-        if (!ticks) return;
-        mach_wait_until(mach_absolute_time()+ticks);
-    }
-}
-
-
 @interface DisplayLinkReference : NSObject <NSApplicationDelegate, CAMetalDisplayLinkDelegate>
 @property NSWindow *window;
 @property CAMetalLayer *layer;
@@ -31,9 +18,6 @@ static void wait_until_media_time(double target) {
 @property id<MTLComputePipelineState> workload;
 @property id<MTLBuffer> scratch;
 @property float schedulingRate;
-@property unsigned updateCount;
-@property unsigned everyNthUpdate;
-@property double consumeFraction;
 @end
 
 @implementation DisplayLinkReference
@@ -52,7 +36,7 @@ static void wait_until_media_time(double target) {
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(80, 80, 960, 600)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
         backing:NSBackingStoreBuffered defer:NO screen:screen];
-    self.window.title = [NSString stringWithFormat:@"Metal timing: %.0f updates/s, render 1/%u, latency %.0f, sync %d", self.schedulingRate,self.everyNthUpdate,self.latency,self.syncEnabled];
+    self.window.title = [NSString stringWithFormat:@"Metal timing: %.0f frames/s, latency %.0f, sync %d", self.schedulingRate,self.latency,self.syncEnabled];
     self.layer = [CAMetalLayer layer];
     self.layer.device = self.device;
     self.layer.displaySyncEnabled=self.syncEnabled;
@@ -80,12 +64,7 @@ static void wait_until_media_time(double target) {
 }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return YES; }
 - (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update {
-    if (self.updateCount++ % self.everyNthUpdate) return;
     double began = CACurrentMediaTime();
-    // Diagnostic only: consume a fraction of the CPU budget supplied by Metal.
-    // This is not a proposed fixed render-time estimate for a game.
-    double encode_at=began+self.consumeFraction*fmax(0,update.targetTimestamp-began);
-    if (encode_at>began) wait_until_media_time(encode_at);
     double input_sample=CACurrentMediaTime();
     id<CAMetalDrawable> drawable = update.drawable;
     id<MTLCommandBuffer> command = [self.queue commandBuffer];
@@ -141,13 +120,10 @@ int main(int argc, const char **argv) {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
         DisplayLinkReference *delegate = [DisplayLinkReference new];
-        delegate.variableGPU=argc>7?atoi(argv[7]):NO;
-        delegate.syncEnabled=argc>6?atoi(argv[6]):YES;
-        delegate.schedulingRate=argc>4?atof(argv[4]):60;
-        delegate.everyNthUpdate=argc>5?atoi(argv[5]):1;
-        if(delegate.everyNthUpdate<1) return 2;
+        delegate.variableGPU=argc>5?atoi(argv[5]):NO;
+        delegate.syncEnabled=argc>4?atoi(argv[4]):YES;
+        delegate.schedulingRate=argc>3?atof(argv[3]):60;
         delegate.latency=argc>2?atof(argv[2]):1;
-        delegate.consumeFraction=argc>3?atof(argv[3]):0;
         delegate.trace = fopen(argv[1], "w");
         if (!delegate.trace) return 3;
         setvbuf(delegate.trace, NULL, _IOLBF, 0);

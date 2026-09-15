@@ -1,5 +1,11 @@
 # Presentation timing findings — 15 September 2026
 
+> Current direction: the 120-update/every-other-frame workaround and manual
+> submission delays have been removed. Their measurements below are historical
+> diagnostic results, not a proposed fix. Variable-GPU testing is deferred until
+> the complete presentation feedback loop is implemented. The work now focuses
+> on connecting real presentation admission and scheduling to the D3D11 loop.
+
 The tests found a real encoder wake-up delay and separated it from Metal's display
 schedule. The encoder fix is implemented in the DXMT experiment branch. The native
 presentation demo now exposes the actual API deadlines and offers a lower-delay
@@ -157,14 +163,11 @@ retained only as diagnostics, not a proposed fixed render-time heuristic.
 
 ## Remaining before Yaagl installation
 
-The improved native scheduling configuration still needs a complete variable-GPU
-run. A partial run observed GPU work around 0.16–2.4 ms, but display sleep cut it
-short. The final demo includes a heavier workload intended to reach about 10 ms;
-that run currently has no usable on-screen data and is not claimed as validated.
-Waking the display programmatically did not restore visible presentations; the
-Mac needs to be awake and unlocked for the remaining run.
+Variable-GPU tests are deferred until the complete feedback loop is in place.
+The callback-skipping configuration was rejected and removed; earlier data
+above remains only as experimental history.
 
-After that, the display-link schedule must be bridged into the Wine/D3D11 demo
+The display schedule must be bridged into the Wine/D3D11 demo
 and tested there: admit work from a scheduling opportunity, preserve the
 application's synchronization choice, submit the corresponding drawable before
 its deadline, and keep presentation feedback separate from GPU resource cleanup.
