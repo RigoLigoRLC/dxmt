@@ -14,7 +14,9 @@ gave 60 FPS, 41.33-ms median present delay and 107.07-ms input-to-display;
 the new path gave 59.98 FPS, 7.56 ms and 9.93 ms, with no older frames at input.
 This is not HSR. Variable GPU execution from 1.14 to 13.56 ms also sustained
 60.05 FPS, with all 600 warm frames shown and median input-to-display 15.96 ms.
-Yaagl is unchanged. See the local task outputs/frame-spacing/README.md.
+The verified candidate was subsequently installed into Yaagl's DXMT source
+folder with backups; no direct Wineprefix or game writes. HSR has not been run.
+See the local task outputs/dxmt-display-pacing/README.md.
 
 # Communication
 

@@ -107,7 +107,15 @@ is opt-in while those behaviors and HSR remain unverified.
 
 The last dark fullscreen workload completed normally after 14 seconds. The user
 reported a black screen and subsequently confirmed the desktop returned. Further
-verification in this session stays offscreen. Yaagl and its prefix are unchanged.
+verification in this session stays offscreen.
+
+After verification, the candidate from commit `bc9e25b` was installed into Yaagl's
+DXMT source folder under the user's earlier authorization, with `.bak.bc9e25b`
+backups of `d3d11.dll`, `dxgi.dll`, `winemetal.dll` and `winemetal.so`. Its pacing
+option is enabled in Yaagl's `dxmt.conf`; Yaagl already supplies the 60-FPS cap.
+The launcher copies these files through its normal startup procedure. No original
+Wineprefix or game file was directly modified, and HSR was not launched.
+Actual HSR latency and behavior remain for the user's next normal Yaagl run.
 
 ## Reproduction and provenance
 
