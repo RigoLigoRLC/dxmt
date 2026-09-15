@@ -39,8 +39,10 @@ task's `outputs/native-display-pacing/` directory; recordings are not build inpu
   GPU throttle. Nonwaitable swapchains retain the original GPU-completion throttle.
 - The device default is restored to three frames. DXGI's zero-means-default and
   upper-limit validation are retained.
-- The encoder uses WaitOnAddress on Windows to avoid the measured polling delay
-  in this toolchain's atomic wait fallback.
+- The encoder uses standard C++ atomic wait/notify. The release CI uses
+  Homebrew GCC/MinGW-w64, whose wait blocks on a condition variable. The earlier
+  LLVM-MinGW libc++ build polled instead; its custom Win32 wake workaround
+  has been removed after measuring the release toolchain.
 
 The waitable correction fixes an early signal, but waiting only for completed
 presentations did not by itself deliver the desired frame-start schedule. The
@@ -88,3 +90,32 @@ frames displayed, all 659 intervals at 16.67 ms, 60 FPS, 5.68-ms median present
 delay, and 7.84-ms median input-to-display. No warm display-link updates were
 missed. The original Instruments verification is unchanged; no new Instruments
 capture was needed for removal of the unused modes.
+
+## Release-toolchain verification
+
+The release package in `.github/workflows/ci.yml` consumes GCC/MinGW-w64
+artifacts. The earlier local build instead selected LLVM-MinGW through PATH.
+Using the Homebrew toolchain selected by CI (GCC 16.2.0 in this run), the same
+atomic-wake diagnostic gave median 0.051–0.057 ms across three runs, versus
+5.80–7.48 ms with LLVM-MinGW 20251216. Disassembly shows GCC waiting on
+`pthread_cond_wait` and notifying through `pthread_cond_broadcast`; it does not
+use the timed polling fallback seen in that LLVM libc++ build.
+
+The explicit address-wait helper and its import library were removed. The cleaned
+standard-C++ diagnostic measured median 0.052 ms over 120 handoffs. The full GCC
+x64 release build, builtin-DLL postprocessing, and Meson install passed, along
+with all five native presentation-counter checks. The resulting D3D11 DLL has
+no WaitOnAddress/WakeByAddress imports. GCC also required adding the direct
+`<iomanip>` include used by GUID formatting.
+
+The isolated eight-second Wine smoke tests completed normally: 321 frames and
+callbacks for the waitable case, 485 for the legacy case. All measured warm frames
+had callbacks. The waitable case still runs around 40 FPS, as before; removing
+this toolchain workaround does not complete the display-driven pacing work.
+Yaagl and the original game prefix were not updated.
+
+This was a local reproduction of the CI x64 release recipe, not a GitHub Actions
+run. The Wine SDK version, LLVM 15 version, Meson 1.10.0, release options, and
+GCC/MinGW compiler family follow CI. Local Apple Clang/Xcode 26.2 replaces CI's
+Xcode 16.1; the existing native LLVM-to-SDK libc++ link option is retained, and
+`enable_tests=true` is added. No MSVC workflow was introduced.

@@ -44,3 +44,12 @@ Read the research checkpoint at `/Users/rigoligo/Documents/Codex/2026-09-14/i-go
 - Do not restore the rejected workaround requesting 120 display-link callbacks while rendering only 60 frames.
 - Defer variable-GPU-work testing until the final feedback loop is in place.
 - Validate the demo before installing further changes into Yaagl. Do not alter the original game or Wineprefix during this investigation.
+
+# Release toolchain
+
+Follow the GCC/MinGW-w64 jobs that feed the release package in
+`.github/workflows/ci.yml`. The earlier local LLVM-MinGW build used libc++ whose
+atomic wait polled and added milliseconds. Homebrew GCC's standard atomic wait
+was verified to block and wake promptly in the isolated Wine runtime. The custom
+Win32 address-wait helper was removed; keep ordinary C++ wait/notify. Do not
+describe the polling delay as an unavoidable Wine or cross-compilation problem.

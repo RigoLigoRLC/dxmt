@@ -37,10 +37,10 @@ surface/swap events. Keep the CSV and exported tables at the same filename prefi
 
 ## D3D11 game-loop diagnostic
 
-With llvm-mingw's bin directory on PATH:
+Use Homebrew `mingw-w64`, as the release package jobs in `.github/workflows/ci.yml` do:
 
 ```sh
-x86_64-w64-mingw32-clang -O2 tests/presentation/waitable_pacing.c \
+x86_64-w64-mingw32-gcc -O2 tests/presentation/waitable_pacing.c \
   -ld3d11 -ldxgi -ldxguid -o /tmp/waitable_pacing.exe
 clang -arch x86_64 -dynamiclib -O2 -fobjc-arc -fblocks \
   tests/presentation/present_trace_wall.m -framework Metal -framework QuartzCore \
@@ -71,13 +71,23 @@ The old presentation bridge and its disable flag no longer exist on this branch.
 ## Encoder wake-up regression
 
 ```sh
-x86_64-w64-mingw32-clang++ -std=c++20 -O2 -static \
-  tests/presentation/atomic_wake.cpp -Isrc/util -lsynchronization \
-  -o /tmp/atomic_wake.exe
+x86_64-w64-mingw32-g++ -std=c++20 -O2 -static \
+  tests/presentation/atomic_wake.cpp -o /tmp/atomic_wake.exe
 ```
 
-Argument 0 measures this toolchain's `std::atomic::wait`; argument 1 measures
-DXMT's address-wait helper. Each run checks 120 delayed producer/consumer
-handoffs. Shared-host scheduling makes latency a measurement rather than a strict
-CI threshold. Native presentation-counter tests run with
+Run the executable with the isolated Wine runtime, without arguments. It checks
+120 delayed producer/consumer handoffs using only standard C++ synchronization
+and clocks. A two-second handoff timeout detects a stuck worker. The latency
+distribution is a measurement, not a strict CI threshold.
+
+Compile the same source with another toolchain to compare its atomic wait.
+The release package depends on the GCC/MinGW-w64 jobs, not the LLVM-MinGW jobs.
+In three same-source comparisons in the same Wine prefix, GCC 16.2.0 standard
+atomic wait had median wakeup 0.051–0.057 ms; LLVM-MinGW 20251216 / libc++ 21.1.8
+had 5.80–7.48 ms. GCC's binary calls a blocking condition-variable wait and its
+notification wakes that wait. The earlier explicit Win32 address-wait helper and
+its synchronization import library are no longer needed with the release
+toolchain. This does not repair LLVM-MinGW's library fallback.
+
+Native presentation-counter tests run with
 `meson test -C BUILD_DIR presentation-feedback --print-errorlogs`.

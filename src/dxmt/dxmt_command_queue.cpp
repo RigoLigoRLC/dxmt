@@ -2,7 +2,6 @@
 #include "Metal.hpp"
 #include "dxmt_statistics.hpp"
 #include "util_env.hpp"
-#include "util_atomic_wait.hpp"
 #include "util_win32_compat.h"
 #include <atomic>
 
@@ -57,7 +56,7 @@ CommandQueue::~CommandQueue() {
   TRACE("Destructing command queue");
   stopped.store(true);
   ready_for_encode++;
-  NotifyAtomicChange(ready_for_encode);
+  ready_for_encode.notify_one();
   ready_for_commit++;
   ready_for_commit.notify_one();
   SharedEventListener_destroy(shared_event_listener);
@@ -83,7 +82,7 @@ CommandQueue::CommitCurrentChunk() {
   statistics.command_buffer_count++;
 #if ASYNC_ENCODING
   ready_for_encode.fetch_add(1, std::memory_order_release);
-  NotifyAtomicChange(ready_for_encode);
+  ready_for_encode.notify_one();
 
   auto t0 = clock::now();
   chunk_ongoing.wait(kCommandChunkCount - 1, std::memory_order_acquire);
@@ -152,7 +151,7 @@ CommandQueue::EncodingThread() {
   SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
   uint64_t internal_seq = 1;
   while (!stopped.load()) {
-    WaitForAtomicChange(ready_for_encode, internal_seq);
+    ready_for_encode.wait(internal_seq, std::memory_order_acquire);
     if (stopped.load())
       break;
     // perform...
